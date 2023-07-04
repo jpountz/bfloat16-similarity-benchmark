@@ -13,6 +13,7 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
 import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.ShortVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorShuffle;
@@ -304,19 +305,11 @@ public class DotProductBenchmark {
     return res;
   }
 
-  private static final VectorShuffle<Short> SHUFFLE_RIGHT = VectorShuffle.iota(ShortVector.SPECIES_PREFERRED, -1, 1, true);
-  private static final ShortVector ODD_MASK;
-  static {
-    ShortVector mask = ShortVector.zero(ShortVector.SPECIES_PREFERRED);
-    // every odd lane is 0xFFFF
-    for (int i = 1; i < ShortVector.SPECIES_PREFERRED.length(); i += 2) {
-      mask = mask.withLane(i, (short) 0xFFFF);
-    }
-    ODD_MASK = mask;
-  }
+  private static final IntVector SHIFT_16 = IntVector.broadcast(VectorSpecies.of(int.class, ShortVector.SPECIES_PREFERRED.vectorShape()), 16);
+  private static final IntVector MASK_16 = IntVector.broadcast(VectorSpecies.of(int.class, ShortVector.SPECIES_PREFERRED.vectorShape()), 0xFFFF0000);
 
   /**
-   * Emulation of a vectorized dot product on bfloat16, by leveraging shuffles and masks to convert bfloat16s to floats, and then computing the dot product on floats.
+   * Emulation of a vectorized dot product on bfloat16, by leveraging shifts and masks to convert bfloat16s to floats, and then computing the dot product on floats.
    */
   @Benchmark
   public float vectorizedBFloat16Emulation(SimilarityState state) {
@@ -327,29 +320,25 @@ public class DotProductBenchmark {
     FloatVector acc = FloatVector.zero(VectorSpecies.of(float.class, ShortVector.SPECIES_PREFERRED.vectorShape()));
     int i;
     for (i = 0; i < upperBound; i += ShortVector.SPECIES_PREFERRED.length()) {
-      ShortVector aNext = ShortVector.fromArray(ShortVector.SPECIES_PREFERRED, a, i);
+      IntVector aNext = ShortVector.fromArray(ShortVector.SPECIES_PREFERRED, a, i).reinterpretAsInts();
       // FloatVector that stores every bfloat16 at an even index
       FloatVector aNextEven = aNext
-          .rearrange(SHUFFLE_RIGHT)
-          .and(ODD_MASK)
+          .lanewise(VectorOperators.LSHL, SHIFT_16)
           .reinterpretAsFloats();
       // FloatVector that stores every bfloat16 at an odd index
       FloatVector aNextOdd = aNext
-          .and(ODD_MASK)
+          .and(MASK_16)
           .reinterpretAsFloats();
 
-      ShortVector bNext = ShortVector.fromArray(ShortVector.SPECIES_PREFERRED, b, i);
+      IntVector bNext = ShortVector.fromArray(ShortVector.SPECIES_PREFERRED, b, i).reinterpretAsInts();
       FloatVector bNextEven = bNext
-          .rearrange(SHUFFLE_RIGHT)
-          .and(ODD_MASK)
+          .lanewise(VectorOperators.LSHL, SHIFT_16)
           .reinterpretAsFloats();
       FloatVector bNextOdd = bNext
-          .and(ODD_MASK)
+          .and(MASK_16)
           .reinterpretAsFloats();
 
-      acc = acc
-          .add(aNextEven.mul(bNextEven))
-          .add(aNextOdd.mul(bNextOdd));
+      acc = acc.add(aNextEven.mul(bNextEven).add(aNextOdd.mul(bNextOdd)));
     }
 
     float res = acc.reduceLanes(VectorOperators.ADD);
