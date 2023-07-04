@@ -16,7 +16,6 @@ import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.ShortVector;
 import jdk.incubator.vector.VectorOperators;
-import jdk.incubator.vector.VectorShuffle;
 import jdk.incubator.vector.VectorSpecies;
 
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
